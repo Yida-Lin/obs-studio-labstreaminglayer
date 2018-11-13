@@ -11,7 +11,7 @@
 
 /// Implementation of the clock facility.
 double lsl::lsl_clock() { 
-	return boost::chrono::nanoseconds(boost::chrono::high_resolution_clock::now().time_since_epoch()).count()/1000000000.0; 
+	return lslboost::chrono::nanoseconds(lslboost::chrono::high_resolution_clock::now().time_since_epoch()).count()/1000000000.0; 
 }
 
 /// Ensure that LSL is initialized. Performs initialization tasks
@@ -33,3 +33,6 @@ void lsl::ensure_lsl_initialized() {
 #endif
 	}
 }
+
+lsl::lost_error::~lost_error() {}
+lsl::timeout_error::~timeout_error() {}

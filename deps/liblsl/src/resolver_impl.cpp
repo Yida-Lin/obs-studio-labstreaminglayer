@@ -1,18 +1,18 @@
 #include <sstream>
 #include <iostream>
 #include <istream>
+#include <boost/asio.hpp>
 #include <boost/bind.hpp>
-#include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/functional/hash.hpp>
 #include "resolver_impl.h"
+#include "socket_utils.h"
 
 
 // === implementation of the resolver_impl class ===
 
 using namespace lsl;
-using namespace boost::asio;
-using boost::posix_time::millisec;
+using namespace lslboost::asio;
 
 /**
 * Instantiate a new resolver and configure timing parameters.
@@ -26,9 +26,9 @@ resolver_impl::resolver_impl(): cfg_(api_config::get_instance()), cancelled_(fal
 	// parse the multicast addresses into endpoints and store them
 	std::vector<std::string> mcast_addrs = cfg_->multicast_addresses();
 	int mcast_port = cfg_->multicast_port();
-	for (unsigned k=0;k<mcast_addrs.size();k++) {
+	for (std::size_t k=0;k<mcast_addrs.size();k++) {
 		try {
-			mcast_endpoints_.push_back(udp::endpoint(ip::address::from_string(mcast_addrs[k]),(unsigned short)mcast_port));
+			mcast_endpoints_.push_back(udp::endpoint(ip::address::from_string(mcast_addrs[k]),(uint16_t)mcast_port));
 		} 
 		catch(std::exception &) { }
 	}
@@ -37,10 +37,10 @@ resolver_impl::resolver_impl(): cfg_(api_config::get_instance()), cancelled_(fal
 	std::vector<std::string> peers = cfg_->known_peers();
 	udp::resolver udp_resolver(*io_);
 	// for each known peer...
-    for (unsigned k=0;k<peers.size();k++) {
+    for (std::size_t k=0;k<peers.size();k++) {
         try {
             // resolve the name
-            udp::resolver::query q(peers[k],boost::lexical_cast<std::string>(cfg_->base_port()));
+            udp::resolver::query q(peers[k],lslboost::lexical_cast<std::string>(cfg_->base_port()));
             // for each endpoint...
             for (udp::resolver::iterator i=udp_resolver.resolve(q); i != udp::resolver::iterator(); i++) {
                 // for each port in the range...
@@ -82,8 +82,8 @@ std::vector<stream_info_impl> resolver_impl::resolve_oneshot(const std::string &
 
 	// start a timer that cancels all outstanding IO operations and wave schedules after the timeout has expired
 	if (timeout != FOREVER) {
-		resolve_timeout_expired_.expires_from_now(millisec(1000*timeout));
-		resolve_timeout_expired_.async_wait(boost::bind(&resolver_impl::resolve_timeout_expired,this,placeholders::error));
+		resolve_timeout_expired_.expires_from_now(timeout_sec(timeout));
+		resolve_timeout_expired_.async_wait(lslboost::bind(&resolver_impl::resolve_timeout_expired,this,placeholders::error));
 	}
 
 	// start the first wave of resolve packets
@@ -114,13 +114,13 @@ void resolver_impl::resolve_continuous(const std::string &query, double forget_a
 	// start a wave of resolve packets
 	next_resolve_wave();
 	// spawn a thread that runs the IO operations
-	background_io_.reset(new boost::thread(boost::bind(&io_service::run,io_)));
+	background_io_.reset(new lslboost::thread(lslboost::bind(&io_service::run,io_)));
 }
 
 /// Get the current set of results (e.g., during continuous operation).
 std::vector<stream_info_impl> resolver_impl::results() {
 	std::vector<stream_info_impl> output;
-	boost::lock_guard<boost::mutex> lock(results_mut_);
+	lslboost::lock_guard<lslboost::mutex> lock(results_mut_);
 	double expired_before = lsl_clock() - forget_after_;
 	for(result_container::iterator i=results_.begin(); i!=results_.end();) {
 		if (i->second.second < expired_before) {
@@ -140,7 +140,7 @@ std::vector<stream_info_impl> resolver_impl::results() {
 void resolver_impl::next_resolve_wave() {
 	std::size_t num_results = 0;
 	{
-		boost::lock_guard<boost::mutex> lock(results_mut_);
+		lslboost::lock_guard<lslboost::mutex> lock(results_mut_);
 		num_results = results_.size();
 	}
 	if (cancelled_ || expired_ || (minimum_ && (num_results >= (std::size_t)minimum_) && lsl_clock() >= wait_until_)) {
@@ -151,14 +151,14 @@ void resolver_impl::next_resolve_wave() {
 		udp_multicast_burst();
 		if (!ucast_endpoints_.empty()) {
 			// we have known peer addresses: we spawn a unicast wave and shortly thereafter the next wave
-			unicast_timer_.expires_from_now(millisec(1000*cfg_->multicast_min_rtt()));
-			unicast_timer_.async_wait(boost::bind(&resolver_impl::udp_unicast_burst,this,placeholders::error));
-			wave_timer_.expires_from_now(millisec(1000*((fast_mode_?0:cfg_->continuous_resolve_interval())+(cfg_->multicast_min_rtt()+cfg_->unicast_min_rtt()))));
-			wave_timer_.async_wait(boost::bind(&resolver_impl::wave_timeout_expired,this,placeholders::error));
+			unicast_timer_.expires_from_now(timeout_sec(cfg_->multicast_min_rtt()));
+			unicast_timer_.async_wait(lslboost::bind(&resolver_impl::udp_unicast_burst,this,placeholders::error));
+			wave_timer_.expires_from_now(timeout_sec((fast_mode_?0:cfg_->continuous_resolve_interval())+(cfg_->multicast_min_rtt()+cfg_->unicast_min_rtt())));
+			wave_timer_.async_wait(lslboost::bind(&resolver_impl::wave_timeout_expired,this,placeholders::error));
 		} else {
 			// there are no known peer addresses; just set up the next wave
-			wave_timer_.expires_from_now(millisec(1000*((fast_mode_?0:cfg_->continuous_resolve_interval())+cfg_->multicast_min_rtt())));
-			wave_timer_.async_wait(boost::bind(&resolver_impl::wave_timeout_expired,this,placeholders::error));
+			wave_timer_.expires_from_now(timeout_sec((fast_mode_?0:cfg_->continuous_resolve_interval())+cfg_->multicast_min_rtt()));
+			wave_timer_.async_wait(lslboost::bind(&resolver_impl::wave_timeout_expired,this,placeholders::error));
 		}
 	}
 }
@@ -166,7 +166,7 @@ void resolver_impl::next_resolve_wave() {
 /// Start a new resolver attepmpt on the multicast hosts.
 void resolver_impl::udp_multicast_burst() {
 		// start one per IP stack under consideration
-		for (unsigned k=0,failures=0;k<udp_protocols_.size();k++) {
+		for (std::size_t k=0,failures=0;k<udp_protocols_.size();k++) {
 			try {
 				resolve_attempt_udp_p attempt(new resolve_attempt_udp(*io_,udp_protocols_[k],mcast_endpoints_,query_,results_,results_mut_,cfg_->multicast_max_rtt(),this));
 				attempt->begin();
@@ -182,7 +182,7 @@ void resolver_impl::udp_multicast_burst() {
 void resolver_impl::udp_unicast_burst(error_code err) {
 	if (err != error::operation_aborted) {
 		// start one per IP stack under consideration
-		for (unsigned k=0,failures=0;k<udp_protocols_.size();k++) {
+		for (std::size_t k=0,failures=0;k<udp_protocols_.size();k++) {
 			try {
 				resolve_attempt_udp_p attempt(new resolve_attempt_udp(*io_,udp_protocols_[k],ucast_endpoints_,query_,results_,results_mut_,cfg_->unicast_max_rtt(),this));
 				attempt->begin();
@@ -221,10 +221,10 @@ void resolver_impl::cancel_ongoing_resolve() {
 	// make sure that ongoing handler loops terminate
 	expired_ = true;
 	// timer fires: cancel the next wave schedule
-	io_->post(boost::bind(&deadline_timer::cancel,&wave_timer_));
-	io_->post(boost::bind(&deadline_timer::cancel,&unicast_timer_));
+	io_->post(lslboost::bind(&deadline_timer::cancel,&wave_timer_));
+	io_->post(lslboost::bind(&deadline_timer::cancel,&unicast_timer_));
 	// and cancel the timeout, too
-	io_->post(boost::bind(&deadline_timer::cancel,&resolve_timeout_expired_));
+	io_->post(lslboost::bind(&deadline_timer::cancel,&resolve_timeout_expired_));
 	// cancel all currently active resolve attempts
 	cancel_all_registered();
 }

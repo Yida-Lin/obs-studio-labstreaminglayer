@@ -1,23 +1,24 @@
 #include "time_receiver.h"
 #include "api_config.h"
+#include <boost/asio.hpp>
 #include <iostream>
 #include <boost/bind.hpp>
+#include "socket_utils.h"
 
 
 // === implementation of the time_receiver class ===
 
 using namespace lsl;
-using namespace boost::asio;
-using boost::posix_time::millisec;
+using namespace lslboost::asio;
 
 /**
 * Construct a new time provider from an inlet connection
 */
-time_receiver::time_receiver(inlet_connection &conn): conn_(conn), timeoffset_(std::numeric_limits<double>::max()),
-       remote_time_(std::numeric_limits<double>::max()), uncertainty_(std::numeric_limits<double>::max()), was_reset_(false),
+time_receiver::time_receiver(inlet_connection &conn): conn_(conn), was_reset_(false), timeoffset_(std::numeric_limits<double>::max()),
+       remote_time_(std::numeric_limits<double>::max()), uncertainty_(std::numeric_limits<double>::max()),
 	   cfg_(api_config::get_instance()), time_sock_(time_io_), next_estimate_(time_io_), aggregate_results_(time_io_), next_packet_(time_io_) {
 	conn_.register_onlost(this,&timeoffset_upd_);
-	conn_.register_onrecover(this,boost::bind(&time_receiver::reset_timeoffset_on_recovery,this));
+	conn_.register_onrecover(this,lslboost::bind(&time_receiver::reset_timeoffset_on_recovery,this));
 	time_sock_.open(conn_.udp_protocol());
 }
 
@@ -59,16 +60,16 @@ double time_receiver::time_correction(double timeout) {
 }
 
 double time_receiver::time_correction(double *remote_time, double *uncertainty, double timeout ) {
-	boost::unique_lock<boost::mutex> lock(timeoffset_mut_);
+	lslboost::unique_lock<lslboost::mutex> lock(timeoffset_mut_);
 	if (!timeoffset_available()) {
 		// start thread if not yet running
 		if (!time_thread_.joinable())
-			time_thread_ = boost::thread(&time_receiver::time_thread,this);
+			time_thread_ = lslboost::thread(&time_receiver::time_thread,this);
 		// wait until the timeoffset becomes available (or we time out)
 		if (timeout >= FOREVER)
-			timeoffset_upd_.wait(lock, boost::bind(&time_receiver::timeoffset_available,this));
+			timeoffset_upd_.wait(lock, lslboost::bind(&time_receiver::timeoffset_available,this));
 		else
-			if (!timeoffset_upd_.wait_for(lock, boost::chrono::duration<double>(timeout), boost::bind(&time_receiver::timeoffset_available,this)))
+			if (!timeoffset_upd_.wait_for(lock, lslboost::chrono::duration<double>(timeout), lslboost::bind(&time_receiver::timeoffset_available,this)))
 				throw timeout_error("The time_correction() operation timed out.");
 	}
 	if (conn_.lost())
@@ -81,7 +82,7 @@ double time_receiver::time_correction(double *remote_time, double *uncertainty, 
 /// Determine whether the clock was (potentially) reset since the last call to was_reset()
 /// This can happen if the stream got lost (e.g., app crash) and the computer got restarted or swapped out
 bool time_receiver::was_reset() {
-	boost::unique_lock<boost::mutex> lock(timeoffset_mut_);
+	lslboost::unique_lock<lslboost::mutex> lock(timeoffset_mut_);
 	bool result = was_reset_;
 	was_reset_ = false;
 	return result;
@@ -121,11 +122,11 @@ void time_receiver::start_time_estimation() {
 	send_next_packet(1);
 	receive_next_packet();
 	// schedule the aggregation of results (by the time when all replies should have been received)
-	aggregate_results_.expires_from_now(millisec(1000*(cfg_->time_probe_max_rtt() + cfg_->time_probe_interval()*cfg_->time_probe_count())));
-	aggregate_results_.async_wait(boost::bind(&time_receiver::result_aggregation_scheduled,this,placeholders::error));
+	aggregate_results_.expires_from_now(timeout_sec(cfg_->time_probe_max_rtt() + cfg_->time_probe_interval()*cfg_->time_probe_count()));
+	aggregate_results_.async_wait(lslboost::bind(&time_receiver::result_aggregation_scheduled,this,placeholders::error));
 	// schedule the next estimation step
-	next_estimate_.expires_from_now(millisec(1000*cfg_->time_update_interval()));
-	next_estimate_.async_wait(boost::bind(&time_receiver::next_estimate_scheduled,this,placeholders::error));
+	next_estimate_.expires_from_now(timeout_sec(cfg_->time_update_interval()));
+	next_estimate_.async_wait(lslboost::bind(&time_receiver::next_estimate_scheduled,this,placeholders::error));
 }
 
 /// Handler that gets called once the next time estimation shall be scheduled
@@ -140,15 +141,15 @@ void time_receiver::send_next_packet(int packet_num) {
 		// form the request & send it
 		std::ostringstream request; request.precision(16); request << "LSL:timedata\r\n" << current_wave_id_ << " " << lsl_clock() << "\r\n";
 		string_p msg_buffer(new std::string(request.str()));
-		time_sock_.async_send_to(boost::asio::buffer(*msg_buffer), conn_.get_udp_endpoint(),
-			boost::bind(&time_receiver::handle_send_outcome,this,msg_buffer,placeholders::error));
+		time_sock_.async_send_to(lslboost::asio::buffer(*msg_buffer), conn_.get_udp_endpoint(),
+			lslboost::bind(&time_receiver::handle_send_outcome,this,msg_buffer,placeholders::error));
 	} catch(std::exception &e) {
 		std::cerr << "Error trying to send a time packet: " << e.what() << std::endl;
 	}
 	// schedule next packet
 	if (packet_num < cfg_->time_probe_count()) {
-		next_packet_.expires_from_now(millisec(1000.0*cfg_->time_probe_interval()));
-		next_packet_.async_wait(boost::bind(&time_receiver::next_packet_scheduled,this,++packet_num,placeholders::error));
+		next_packet_.expires_from_now(timeout_sec(cfg_->time_probe_interval()));
+		next_packet_.async_wait(lslboost::bind(&time_receiver::next_packet_scheduled,this,++packet_num,placeholders::error));
 	}
 }
 
@@ -163,8 +164,8 @@ void time_receiver::next_packet_scheduled(int packet_num, error_code err) {
 
 /// Request reception of the next time packet
 void time_receiver::receive_next_packet() {
-	time_sock_.async_receive_from(boost::asio::buffer(recv_buffer_), remote_endpoint_,
-		boost::bind(&time_receiver::handle_receive_outcome, this, placeholders::error, placeholders::bytes_transferred));
+	time_sock_.async_receive_from(lslboost::asio::buffer(recv_buffer_), remote_endpoint_,
+		lslboost::bind(&time_receiver::handle_receive_outcome, this, placeholders::error, placeholders::bytes_transferred));
 }
 
 /// Handler that gets called once reception of a time packet has completed
@@ -199,7 +200,7 @@ void time_receiver::result_aggregation_scheduled(error_code err) {
 			// take the estimate with the lowest error bound (=rtt), as in NTP
 			double best_offset=0, best_rtt=FOREVER;
 			double best_remote_time=0;
-			for (unsigned k=0;k<estimates_.size();k++) {
+			for (std::size_t k = 0; k < estimates_.size(); k++) {
 				if (estimates_[k].first < best_rtt) {
 					best_rtt = estimates_[k].first;
 					best_offset = estimates_[k].second;
@@ -208,7 +209,7 @@ void time_receiver::result_aggregation_scheduled(error_code err) {
 			}
 			// and notify that the result is available
 			{
-				boost::lock_guard<boost::mutex> lock(timeoffset_mut_);
+				lslboost::lock_guard<lslboost::mutex> lock(timeoffset_mut_);
                 uncertainty_ = best_rtt;
 				timeoffset_ = -best_offset;
 				remote_time_ = best_remote_time;
@@ -220,7 +221,7 @@ void time_receiver::result_aggregation_scheduled(error_code err) {
 
 /// Ensures that the time-offset is reset when the underlying connection is recovered (e.g., switches to another host)
 void time_receiver::reset_timeoffset_on_recovery() {
-	boost::lock_guard<boost::mutex> lock(timeoffset_mut_);
+	lslboost::lock_guard<lslboost::mutex> lock(timeoffset_mut_);
 	if (timeoffset_ != NOT_ASSIGNED)
 		// this will only be set to true if the reset may have caused a possible interruption in the obtained time offsets
 		was_reset_ = true;

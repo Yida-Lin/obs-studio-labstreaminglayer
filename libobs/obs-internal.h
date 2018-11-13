@@ -33,7 +33,8 @@
 #include "media-io/audio-resampler.h"
 #include "media-io/video-io.h"
 #include "media-io/audio-io.h"
-#include "liblsl/lsl_c.h"
+//#include "liblsl/lsl_c.h"
+#include "../deps/liblsl/include/lsl_c.h"
 
 //#include "windows.h"
 //#include"dos.h"

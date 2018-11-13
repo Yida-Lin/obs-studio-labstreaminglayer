@@ -9,8 +9,8 @@
 namespace lsl {
 
 	/// A callback function that allows the post-processor to query some state from other objects when needed.
-	typedef boost::function<double()> postproc_callback_t;
-	typedef boost::function<bool()> reset_callback_t;
+	typedef lslboost::function<double()> postproc_callback_t;
+	typedef lslboost::function<bool()> reset_callback_t;
 
 
 	/// Internal class of an inlet that is responsible for post-processing time stamps.
@@ -27,7 +27,7 @@ namespace lsl {
 		* @param flags An integer that is the result of bitwise OR'ing one or more options from processing_options_t 
 		*        together (e.g., post_clocksync|post_dejitter); the default is to enable all options.
 		*/
-		void set_options(unsigned options=post_ALL) { options_ = options; }
+		void set_options(uint32_t options=post_ALL) { options_ = options; }
 
 		/// Post-process the given time stamp and return the new time-stamp.
 		double process_timestamp(double value);
@@ -43,7 +43,7 @@ namespace lsl {
 
 		// configuration parameters
 		postproc_callback_t query_srate_;		// a callback function that returns the current nominal sampling rate
-		unsigned options_;						// current processing options
+		uint32_t options_;						// current processing options
 		float halftime_;						// smoothing half-time
 
 		// handling of time corrections
@@ -64,7 +64,7 @@ namespace lsl {
 		double last_value_;						// last observed time-stamp value, to force monotonically increasing stamps
 
 		// mutex for thread safety
-		boost::mutex processing_mut_;			// a mutex that protects the runtime data structures
+		lslboost::mutex processing_mut_;			// a mutex that protects the runtime data structures
 	};
 
 

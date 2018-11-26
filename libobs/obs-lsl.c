@@ -30,6 +30,8 @@ obs_lsl_t *obs_lsl_create() {
 	obs_lsl = bzalloc(sizeof(struct obs_lsl));
 	bool success;
 	int  c1 = 4;
+    //int  c1 = 1;
+
 	int c2 = 2;
 	//success = obs_lsl_initialize_internal_display(obs_lsl, c2);
 
@@ -51,7 +53,8 @@ static inline bool obs_lsl_initialize_internal_output(obs_lsl_t *obs_lsl,int cha
 	double starttime;			/* used for send timing */
 
 	info = lsl_create_streaminfo("OBS Studio", "Markers", chan, 1, cft_double64, "abcdefg");
-	char *channel_label[] = { "frame number", "frame time1", "frame time2", "frame time2" };
+    //info = lsl_create_streaminfo("OBS Studio", "Markers", chan, 1, cft_int32, "abcdefg");
+    char *channel_label[] = { "frame number", "frame time1", "frame time2", "frame time2" };
 	char *channel_units[] = { "sample", "seconds", "seconds", "seconds"};
 	desc = lsl_get_desc(info);
 	lsl_append_child_value(desc, "manufacturer", "obs");

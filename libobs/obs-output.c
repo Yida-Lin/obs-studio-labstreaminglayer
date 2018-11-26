@@ -19,6 +19,7 @@
 #include "util/platform.h"
 #include "obs.h"
 #include "obs-internal.h"
+#include "time.h"
 
 #if BUILD_CAPTIONS
 #include <caption/caption.h>
@@ -1070,7 +1071,9 @@ static inline void send_interleaved(struct obs_output *output)
 			sample[0] = (double) output->total_frames;
 			sample[1] = (double) os_gettime_ns();
 			sample[2] = (double) out.tick_time;
-			sample[3] = (double) obs->media_frame_number;
+			//sample[3] = (double) obs->media_frame_number;
+            
+            sample[3] = (double)time(NULL);
 			double timediff = sample[1] - sample[2];
 			send_lsl_trigger_output(&obs->obs_lsl_global->outlet1, sample);
 			//send_ppt_trigger(1, &obs->obs_lsl_global->outputs_mutex);
